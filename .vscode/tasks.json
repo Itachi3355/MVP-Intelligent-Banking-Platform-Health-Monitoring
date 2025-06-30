@@ -1,0 +1,21 @@
+{
+    "version": "2.0.0",
+    "tasks": [
+        {
+            "label": "Run Flask Backend",
+            "type": "shell",
+            "command": "python",
+            "args": ["backend/app.py"],
+            "group": "build",
+            "problemMatcher": []
+        },
+        {
+            "label": "Run Streamlit Dashboard",
+            "type": "shell",
+            "command": "streamlit",
+            "args": ["run", "frontend/dashboard.py"],
+            "group": "build",
+            "problemMatcher": []
+        }
+    ]
+}
