@@ -6,3 +6,5 @@ numpy
 matplotlib
 plotly-express
 joblib
+tensorflow
+keras
