@@ -1,0 +1,10 @@
+2025-06-30T17:54:01.628368 | viewer | DENIED | decompose | /api/seasonal_decompose
+2025-06-30T18:14:45.469342 | analyst | ALLOWED | decompose | /api/arima_forecast
+2025-06-30T18:14:50.364207 | analyst | ALLOWED | decompose | /api/arima_forecast
+2025-06-30T22:58:00.663247 | viewer | DENIED | decompose | /api/seasonal_decompose
+2025-06-30T22:58:57.008781 | viewer | DENIED | decompose | /api/seasonal_decompose
+2025-06-30T23:00:18.535616 | viewer | DENIED | decompose | /api/seasonal_decompose
+2025-06-30T23:03:33.235573 | analyst | ALLOWED | decompose | /api/seasonal_decompose
+2025-06-30T23:04:18.135862 | analyst | ALLOWED | decompose | /api/seasonal_decompose
+2025-06-30T23:04:25.492847 | analyst | ALLOWED | decompose | /api/seasonal_decompose
+2025-06-30T23:04:27.720052 | analyst | ALLOWED | decompose | /api/arima_forecast

@@ -1,11 +1,14 @@
 import pandas as pd
 import numpy as np
-from sklearn.ensemble import IsolationForest
+from sklearn.ensemble import IsolationForest, RandomForestClassifier
 import os
 import tensorflow as tf
 from tensorflow import keras
 from tensorflow.keras.layers import LSTM, Dense  # <-- Fixed import
 from prophet import Prophet
+from statsmodels.tsa.seasonal import seasonal_decompose
+from statsmodels.tsa.arima.model import ARIMA
+import joblib
 
 METRICS_CSV = os.path.join(os.path.dirname(__file__), '../backend/metrics.csv')
 MODEL_PATH = os.path.join(os.path.dirname(__file__), 'isoforest_model.pkl')
@@ -15,6 +18,8 @@ FEATURES = [
     'oracle_query_time', 'oracle_session_count',
     'system_cpu', 'system_memory', 'system_disk'
 ]
+
+ARIMA_MODEL_PATH = os.path.join(os.path.dirname(__file__), 'arima_{metric}.pkl')
 
 def train_isolation_forest():
     df = pd.read_csv(METRICS_CSV)
@@ -143,6 +148,36 @@ def predict_lstm_forecast_with_interval(metric='system_cpu', lookback=10, steps=
     upper = np.percentile(preds, 97.5, axis=0)
     return {'mean': mean, 'lower': lower, 'upper': upper}
 
+def seasonal_decompose_metric(metric='system_cpu', model='additive', period=None):
+    """
+    Perform seasonal decomposition on a metric time series.
+    Args:
+        metric (str): The metric column to decompose.
+        model (str): 'additive' or 'multiplicative'.
+        period (int or None): The number of periods in a complete seasonal cycle. If None, will infer.
+    Returns:
+        dict: trend, seasonal, resid, observed (all as numpy arrays), and timestamps.
+    """
+    df = pd.read_csv(METRICS_CSV)
+    if 'timestamp' not in df.columns:
+        raise ValueError('timestamp column required for seasonal decomposition')
+    ts = pd.Series(df[metric].values, index=pd.to_datetime(df['timestamp']))
+    if period is None:
+        # Try to infer period (e.g., daily, weekly, etc.)
+        inferred = pd.infer_freq(ts.index)
+        if inferred is not None:
+            period = pd.Timedelta('1D') // pd.Timedelta(inferred)
+        else:
+            period = max(2, min(30, len(ts)//10))  # fallback
+    result = seasonal_decompose(ts, model=model, period=int(period), extrapolate_trend='freq')
+    return {
+        'trend': result.trend.values,
+        'seasonal': result.seasonal.values,
+        'resid': result.resid.values,
+        'observed': result.observed.values,
+        'timestamp': ts.index.values
+    }
+
 # --- ENHANCED ANOMALY DETECTION: Flag both high and low outliers ---
 def detect_anomalies():
     import joblib
@@ -161,6 +196,58 @@ def detect_anomalies():
         df.loc[(df['anomaly_pred'] == -1) & (df[feature] > mean + 2*std), f'{feature}_anomaly_type'] = 'high'
         df.loc[(df['anomaly_pred'] == -1) & (df[feature] < mean - 2*std), f'{feature}_anomaly_type'] = 'low'
     return df.tail(50)[['timestamp'] + FEATURES + ['anomaly_pred'] + [f'{f}_anomaly_type' for f in FEATURES]]
+
+def train_random_forest_failure_classifier(label_col='failure_label'):
+    """Train a Random Forest classifier to predict failure types (demo)."""
+    df = pd.read_csv(METRICS_CSV)
+    # For demo, create a synthetic label if not present
+    if label_col not in df.columns:
+        np.random.seed(42)
+        df[label_col] = np.random.choice([0, 1], size=len(df), p=[0.95, 0.05])  # 5% failures
+    X = df[FEATURES].fillna(0)
+    y = df[label_col]
+    model = RandomForestClassifier(n_estimators=100, random_state=42)
+    model.fit(X, y)
+    import joblib
+    model_path = os.path.join(os.path.dirname(__file__), 'rf_failure_classifier.pkl')
+    joblib.dump(model, model_path)
+    print('Random Forest failure classifier trained and saved.')
+
+def predict_failure_classification():
+    """Predict failure probability for the latest metrics using Random Forest."""
+    import joblib
+    model_path = os.path.join(os.path.dirname(__file__), 'rf_failure_classifier.pkl')
+    if not os.path.exists(model_path):
+        train_random_forest_failure_classifier()
+    model = joblib.load(model_path)
+    df = pd.read_csv(METRICS_CSV)
+    X = df[FEATURES].fillna(0)
+    proba = model.predict_proba(X)[-1, 1]  # Probability of failure for latest row
+    pred = model.predict(X)[-1]
+    return {'failure_probability': proba, 'failure_predicted': bool(pred)}
+
+def train_arima_forecast(metric='system_cpu', order=(2,1,2)):
+    df = pd.read_csv(METRICS_CSV)
+    data = df[metric].astype(float)
+    model = ARIMA(data, order=order)
+    model_fit = model.fit()
+    joblib.dump(model_fit, ARIMA_MODEL_PATH.format(metric=metric))
+    print(f'ARIMA model for {metric} trained and saved.')
+
+def predict_arima_forecast(metric='system_cpu', steps=10, order=(2,1,2)):
+    model_path = ARIMA_MODEL_PATH.format(metric=metric)
+    df = pd.read_csv(METRICS_CSV)
+    data = df[metric].astype(float)
+    if not os.path.exists(model_path):
+        train_arima_forecast(metric, order)
+    model_fit = joblib.load(model_path)
+    forecast = model_fit.forecast(steps=steps)
+    conf_int = model_fit.get_forecast(steps=steps).conf_int()
+    return {
+        'forecast': forecast.values,
+        'lower': conf_int.iloc[:, 0].values,
+        'upper': conf_int.iloc[:, 1].values
+    }
 
 if __name__ == '__main__':
     train_isolation_forest()

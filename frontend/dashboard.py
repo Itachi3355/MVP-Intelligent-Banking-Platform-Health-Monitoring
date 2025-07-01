@@ -12,6 +12,8 @@ sys.path.append(_os.path.abspath(_os.path.join(_os.path.dirname(__file__), '..')
 
 BACKEND_URL = 'http://localhost:5000/api/metrics'
 AUTOHEAL_URL = 'http://localhost:5000/api/autoheal'
+SEASONAL_DECOMP_URL = 'http://localhost:5000/api/seasonal_decompose'
+ARIMA_URL = 'http://localhost:5000/api/arima_forecast'
 
 st.set_page_config(page_title="Banking Platform Health Dashboard", layout="wide")
 st.title("💡 Intelligent Banking Platform Health Monitoring")
@@ -113,6 +115,8 @@ ANOMALY_EXPLANATIONS = {
     }
 }
 
+HEADERS_ANALYST = {"X-User-Role": "analyst"}
+
 def show_dashboard():
     df = fetch_metrics()
     if not df.empty:
@@ -123,7 +127,6 @@ def show_dashboard():
             help="Choose which metrics to visualize on the dashboard."
         )
         cols = st.columns(len(selected_metrics))
-        # Ensure autohealed_timestamps is always defined
         if 'autoheal_log' not in st.session_state:
             st.session_state['autoheal_log'] = []
         autohealed_timestamps = [t for t, _ in st.session_state['autoheal_log']]
@@ -132,18 +135,66 @@ def show_dashboard():
                 st.markdown(f"**{metric_info[m]}**")
                 st.caption(f"{m.replace('_', ' ').title()}" )
                 base_fig = px.line(df, x='timestamp', y=m, title=None)
-                # Add LSTM predictions if available and enough data
-                try:
-                    from ml.anomaly_detection import predict_lstm_forecast
-                    if len(df[m]) > 20:
-                        preds = predict_lstm_forecast(metric=m, lookback=10, steps=10)
-                        # Use future timestamps for LSTM predictions
-                        last_time = pd.to_datetime(df['timestamp'].iloc[-1])
-                        freq = pd.to_datetime(df['timestamp'].iloc[-1]) - pd.to_datetime(df['timestamp'].iloc[-2]) if len(df['timestamp']) > 1 else pd.Timedelta(seconds=5)
-                        pred_x = [last_time + freq * (i+1) for i in range(10)]
-                        base_fig.add_scatter(x=pred_x, y=preds, mode='lines+markers', marker=dict(color='green'), name='LSTM Forecast')
-                except Exception as e:
-                    st.caption(f"LSTM prediction error: {e}")
+                # Overlay decomposition components
+                overlay = st.multiselect(
+                    f"Overlay decomposition for {m}",
+                    ['trend', 'seasonal', 'residual'],
+                    default=[],
+                    key=f"decomp_overlay_{m}"
+                )
+                if overlay:
+                    params = {'metric': m, 'model': 'additive'}
+                    try:
+                        resp = requests.get(SEASONAL_DECOMP_URL, params=params, headers=HEADERS_ANALYST)
+                        if resp.status_code == 200:
+                            result = resp.json()
+                            ts = pd.to_datetime(result['timestamp'])
+                            for comp in overlay:
+                                base_fig.add_scatter(x=ts, y=result[comp], mode='lines', name=f'{comp.title()} ({m})')
+                        else:
+                            st.caption(f"Decomposition error: {resp.json().get('error', 'Unknown error')}")
+                    except Exception as e:
+                        st.caption(f"Decomposition fetch error: {e}")
+                # --- Model forecast overlays ---
+                model_overlays = st.multiselect(
+                    f"Overlay model forecasts for {m}",
+                    ['LSTM', 'Prophet', 'ARIMA'],
+                    default=[],
+                    key=f"model_overlay_{m}"
+                )
+                last_time = pd.to_datetime(df['timestamp'].iloc[-1])
+                freq = pd.to_datetime(df['timestamp'].iloc[-1]) - pd.to_datetime(df['timestamp'].iloc[-2]) if len(df['timestamp']) > 1 else pd.Timedelta(seconds=5)
+                pred_x = [last_time + freq * (i+1) for i in range(10)]
+                if 'LSTM' in model_overlays:
+                    try:
+                        from ml.anomaly_detection import predict_lstm_forecast
+                        if len(df[m]) > 20:
+                            preds = predict_lstm_forecast(metric=m, lookback=10, steps=10)
+                            base_fig.add_scatter(x=pred_x, y=preds, mode='lines+markers', marker=dict(color='green'), name='LSTM Forecast')
+                    except Exception as e:
+                        st.caption(f"LSTM prediction error: {e}")
+                if 'Prophet' in model_overlays:
+                    try:
+                        resp = requests.get('http://localhost:5000/api/prophet_forecast', params={'metric': m, 'steps': 10}, headers={'X-User-Role': 'analyst'})
+                        if resp.status_code == 200:
+                            result = resp.json()
+                            base_fig.add_scatter(x=result['ds'], y=result['yhat'], mode='lines+markers', marker=dict(color='blue'), name='Prophet Forecast')
+                        else:
+                            st.caption(f"Prophet error: {resp.json().get('error', 'Unknown error')}")
+                    except Exception as e:
+                        st.caption(f"Prophet fetch error: {e}")
+                if 'ARIMA' in model_overlays:
+                    try:
+                        resp = requests.get(ARIMA_URL, params={'metric': m, 'steps': 10}, headers={'X-User-Role': 'analyst'})
+                        if resp.status_code == 200:
+                            result = resp.json()
+                            base_fig.add_scatter(x=pred_x, y=result['forecast'], mode='lines+markers', marker=dict(color='orange'), name='ARIMA Forecast')
+                            base_fig.add_scatter(x=pred_x, y=result['lower'], mode='lines', line=dict(dash='dot', color='orange'), name='ARIMA Lower')
+                            base_fig.add_scatter(x=pred_x, y=result['upper'], mode='lines', line=dict(dash='dot', color='orange'), name='ARIMA Upper')
+                        else:
+                            st.caption(f"ARIMA error: {resp.json().get('error', 'Unknown error')}")
+                    except Exception as e:
+                        st.caption(f"ARIMA fetch error: {e}")
                 # Add auto-heal markers if any
                 if autohealed_timestamps:
                     for ts in autohealed_timestamps:
@@ -171,6 +222,62 @@ def show_dashboard():
     else:
         st.info("No metrics available yet.")
 
+def show_seasonal_decomposition():
+    st.header('🔎 Seasonal Decomposition (Pattern Recognition)')
+    st.markdown('''
+    <ul>
+        <li><b>Trend</b>: Long-term progression of the metric (e.g., gradual increase or decrease).</li>
+        <li><b>Seasonal</b>: Repeating short-term cycles (e.g., daily, weekly patterns).</li>
+        <li><b>Residual</b>: Irregular fluctuations not explained by trend or seasonality.</li>
+    </ul>
+    ''', unsafe_allow_html=True)
+    metric = st.selectbox('Select metric for decomposition:', all_metrics, help='Choose a metric to analyze for cyclical patterns.')
+    model = st.selectbox('Decomposition model:', ['additive', 'multiplicative'], help='Additive for linear trends, multiplicative for proportional trends.')
+    auto_infer = st.checkbox('Auto-infer seasonal period', value=True)
+    period = None
+    if not auto_infer:
+        period = st.number_input('Seasonal period', min_value=2, max_value=1000, value=2, help='Number of time steps in a full seasonal cycle.')
+    if st.button('Analyze Seasonal Pattern'):
+        params = {'metric': metric, 'model': model}
+        if period is not None:
+            params['period'] = period
+        try:
+            resp = requests.get(SEASONAL_DECOMP_URL, params=params, headers=HEADERS_ANALYST)
+            if resp.status_code == 200:
+                result = resp.json()
+                ts = pd.to_datetime(result['timestamp'])
+                st.subheader(f'Seasonal Decomposition for {metric}')
+                fig = px.line(x=ts, y=result['observed'], labels={'x': 'Timestamp', 'y': metric}, title='Observed')
+                fig.add_scatter(x=ts, y=result['trend'], mode='lines', name='Trend')
+                fig.add_scatter(x=ts, y=result['seasonal'], mode='lines', name='Seasonal')
+                fig.add_scatter(x=ts, y=result['resid'], mode='lines', name='Residual')
+                st.plotly_chart(fig, use_container_width=True)
+                st.caption('Observed = Trend + Seasonal + Residual (additive) or Observed = Trend × Seasonal × Residual (multiplicative)')
+                # Export CSV button
+                df_decomp = pd.DataFrame({
+                    'timestamp': ts,
+                    'observed': result['observed'],
+                    'trend': result['trend'],
+                    'seasonal': result['seasonal'],
+                    'resid': result['resid']
+                })
+                st.download_button('Download Decomposition (CSV)', df_decomp.to_csv(index=False), file_name=f"decomposition_{metric}.csv")
+                # --- Pattern summary ---
+                seasonal = np.array(result['seasonal'])
+                if len(seasonal) > 2:
+                    # Estimate dominant period using autocorrelation
+                    acf = np.correlate(seasonal - np.mean(seasonal), seasonal - np.mean(seasonal), mode='full')
+                    acf = acf[acf.size // 2:]
+                    peak_lag = np.argmax(acf[1:20]) + 1  # Ignore lag 0
+                    if peak_lag > 1 and acf[peak_lag] > 0.5 * acf[0]:
+                        st.info(f"Cyclical pattern detected: cycle length ≈ {peak_lag} time steps.")
+                    else:
+                        st.info("No strong cyclical pattern detected.")
+            else:
+                st.error(f"Decomposition error: {resp.json().get('error', 'Unknown error')}")
+        except Exception as e:
+            st.error(f"Error fetching decomposition: {e}")
+
 refresh_rate = st.sidebar.slider("Refresh rate (seconds)", 2, 30, 5)
 auto_refresh = st.sidebar.checkbox("Auto-refresh graphs", value=True)
 if st.sidebar.button("Refresh now"):
@@ -183,6 +290,9 @@ if auto_refresh or st.session_state.get('refresh_graphs', False):
     st.experimental_rerun() if auto_refresh and hasattr(st, 'experimental_rerun') else None
 else:
     show_dashboard()
+
+# Always show seasonal decomposition section after dashboard
+show_seasonal_decomposition()
 
 st.sidebar.title("Dashboard Help & Info")
 st.sidebar.markdown("""
