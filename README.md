@@ -7,18 +7,15 @@
 ---
 
 ## Architecture Diagram
-
-```mermaid
 flowchart TD
-    A[Metrics Generator] -->|Simulated Data| B[Flask Backend API]
-    B -->|REST API| C[Streamlit Dashboard]
-    B -->|ML Models| D[ML/AI Module (Isolation Forest, LSTM, Prophet, ARIMA)]
-    C -->|User Actions| B
-    B -->|Audit/Incident Log| E[Audit/Incident Logging]
-    B -->|ITSM Tickets| F[ITSM Integration]
-    C -->|PDF| G[KPI Report]
-    C -->|Export| H[CSV/Download]
-```
+    A[Metrics Generator] --> B[Flask Backend API]
+    B --> C[Streamlit Dashboard]
+    B --> D[ML/AI Module: Isolation Forest, LSTM, Prophet, ARIMA]
+    C --> B
+    B --> E[Audit/Incident Logging]
+    B --> F[ITSM Integration]
+    C --> G[KPI Report]
+    C --> H[CSV/Download]
 
 ---
 
