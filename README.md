@@ -54,17 +54,6 @@ streamlit run frontend/dashboard.py
 ---
 
 
-## 🚀 Live Demo & Screenshots
-
-
-[![Live Demo](https://img.shields.io/badge/Live%20Demo-Streamlit%20Cloud-brightgreen?logo=streamlit)](https://your-public-demo-link-here)
-
-**Try it live:** [Open Public Demo](https://your-public-demo-link-here)  <!-- Replace with your actual Streamlit Cloud URL -->
-
-### Screenshots & Walkthrough
-
-![Dashboard Screenshot](demo/dashboard_screenshot.png)
-
 *Main dashboard view: real-time metrics, anomaly overlays, and actionable insights.*
 
 ![Anomaly Detection](demo/anomaly_detection.gif)
